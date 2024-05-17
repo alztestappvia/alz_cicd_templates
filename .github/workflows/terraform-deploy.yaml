@@ -1,0 +1,134 @@
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Name of the environment'
+        type: string
+        required: true
+      terraform-working-directory:
+        description: 'Path to the Terraform module'
+        type: string
+        required: false
+        default: 'terraform'
+      terraform-subscription-id:
+        description: 'Azure subscription ID'
+        type: string
+        required: true
+      terraform-backend-subscription-id:
+        description: 'Azure subscription ID for the backend storage account'
+        type: string
+        required: true
+      terraform-backend-storage-account-name:
+        description: 'Name of the backend storage account'
+        type: string
+        required: true
+      terraform-backend-container-name:
+        description: 'Name of the backend container'
+        type: string
+        required: false
+        default: 'tfstate'
+      terraform-backend-filename:
+        description: 'Name of the backend file'
+        required: true
+        type: string
+      terraform-command-options:
+        description: 'Terraform command options'
+        type: string
+        required: false
+        default: '-input=false -no-color'
+      pool:
+        description: 'Name of the pool'
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+    secrets:
+      GH_TOKEN:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      secure-terraform-command-options:
+        required: false
+env:
+    TF_VAR_github_token: ${{ secrets.GH_TOKEN }}
+jobs:
+  terraform_plan:
+    name: Plan Terraform
+    runs-on: ${{ inputs.pool }}
+    environment: ${{ inputs.environment  }}
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ inputs.terraform-subscription-id }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: de-vri-es/setup-git-credentials@v2
+      with:
+        credentials: https://whoisit:${{ secrets.GH_TOKEN }}@github.com
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ inputs.terraform-subscription-id }}
+    - name: Run Terraform init
+      run: |
+        terraform init -lock=false \
+          -backend-config="subscription_id=${{ inputs.terraform-backend-subscription-id }}" \
+          -backend-config="storage_account_name=${{ inputs.terraform-backend-storage-account-name }}" \
+          -backend-config="container_name=${{ inputs.terraform-backend-container-name }}" \
+          -backend-config="key=${{ inputs.terraform-backend-filename }}" \
+          -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+          -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID }}"
+      working-directory: ${{ inputs.terraform-working-directory }}
+    - name: Run Terraform plan
+      run: terraform plan ${{ inputs.terraform-command-options }} ${{ secrets.secure-terraform-command-options }} -lock=false -out terraform.tfplan
+      working-directory: ${{ inputs.terraform-working-directory }}
+    - name: Cache terraform plan
+      uses: actions/cache@v3
+      with:
+        path: "${{ inputs.terraform-working-directory }}/terraform.tfplan"
+        key: tfplan-${{ github.run_id }}-${{ inputs.terraform-backend-filename }}-${{ github.run_attempt }}
+
+  terraform_apply:
+    name: Apply Terraform
+    runs-on: ${{ inputs.pool  }}
+    needs:
+    - terraform_plan
+    environment: ${{ inputs.environment  }}
+    concurrency: ${{ inputs.environment }}
+    if: success() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release'))
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ inputs.terraform-subscription-id }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: de-vri-es/setup-git-credentials@v2
+      with:
+        credentials: https://whoisit:${{ secrets.GH_TOKEN }}@github.com
+    - name: Login via Az module
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ inputs.terraform-subscription-id }}
+    - name: Run Terraform init
+      working-directory: ${{ inputs.terraform-working-directory }}
+      run: |
+        terraform init -lock=false \
+          -backend-config="subscription_id=${{ inputs.terraform-backend-subscription-id }}" \
+          -backend-config="storage_account_name=${{ inputs.terraform-backend-storage-account-name }}" \
+          -backend-config="container_name=${{ inputs.terraform-backend-container-name }}" \
+          -backend-config="key=${{ inputs.terraform-backend-filename }}" \
+          -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+          -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID }}"
+    - name: Restore terraform plan from cache
+      uses: actions/cache/restore@v3
+      with:
+        path: "${{ inputs.terraform-working-directory }}/terraform.tfplan"
+        key: tfplan-${{ github.run_id }}-${{ inputs.terraform-backend-filename }}-${{ github.run_attempt }}
+    - name: Run Terraform apply
+      working-directory: ${{ inputs.terraform-working-directory }}
+      run: terraform apply -auto-approve terraform.tfplan

@@ -1,0 +1,50 @@
+name: TFLint
+description: Installs and runs TFLint against your terraform code
+inputs:
+  tflint-version:
+    default: "v0.50.0"
+    required: false
+    description: Version of TFLint to use
+  report-path:
+    required: false
+    default: report-tflint.xml
+    description: Relative path to working-directory where test report was stored
+  working-directory:
+    required: true
+    description: Working directory where your terraform root module is
+outputs:
+  report-path:
+    description: Path of the report
+    value: ${{ inputs.working-directory }}/${{ inputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install TFLint
+      shell: bash
+      run: curl https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+      env:
+        TFLINT_VERSION: ${{ inputs.tflint-version }} # This is used directly by the install script
+
+    - name: Copy .tflint.hcl if it doesn't exist
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: |
+        if [ ! -f ${{ inputs.working-directory }}/.tflint.hcl ]; then
+          cp $GITHUB_ACTION_PATH/.tflint.hcl ${{ inputs.working-directory }}
+        fi
+
+    - name: Terraform init
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: terraform init -get -backend=false
+
+    - name: TFLint init
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: tflint --init
+
+    - name: Lint
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: tflint --chdir . --format=junit > ${{ inputs.report-path }}

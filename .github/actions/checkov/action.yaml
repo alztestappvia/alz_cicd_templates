@@ -1,0 +1,37 @@
+name: Checkov
+description: Installs and runs checkov against your terraform code
+inputs:
+  checkov-version:
+    default: "3.1.46"
+    required: false
+    description: Version of checkov to use
+  report-path:
+    required: false
+    default: report-checkov.xml
+    description: Relative path to working-directory where test report was stored
+  working-directory:
+    required: true
+    description: Working directory where your terraform root module is
+  skipped-checks:
+    required: false
+    description: List of checkov checks to skip - default list contains exclusions of rules that are incompatible with policy e.g. requirement to use custom managed keys for storage account encryption
+    default: CKV2_AZURE_18,CKV2_AZURE_1,CKV_TF_1,CKV2_AZURE_38,CKV_AZURE_220
+  cli-args:
+    required: false
+    description: Additional list of CLI arguments to pass to checkov
+    default: ""
+outputs:
+  report-path:
+    description: Path of the report
+    value: ${{ inputs.working-directory }}/${{ inputs.report-path }}
+runs:
+  using: composite
+  steps:
+    - name: Install Checkov
+      run: pip3 install "checkov==${{ inputs.checkov-version }}"
+      shell: bash
+
+    - name: Checkov
+      working-directory: ${{ inputs.working-directory }}
+      run: ~/.local/bin/checkov --skip-check=${{ inputs.skipped-checks }} ${{ inputs.cli-args }} -d . -o=junitxml > ${{ inputs.report-path }}
+      shell: bash

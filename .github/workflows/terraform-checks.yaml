@@ -1,0 +1,56 @@
+on:
+  workflow_call:
+    inputs:
+      terraform-working-directory:
+        type: string
+        required: false
+        description: 'Directory containing Terraform code'
+        default: 'terraform'
+      pool:
+        type: string
+        required: false
+        description: 'Pool to run the job on'
+        default: 'ubuntu-latest'
+    secrets:
+      GH_TOKEN:
+        required: true
+
+jobs:
+  run_tflint:
+    name: TFLint Check
+    runs-on: ${{ inputs.pool }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: de-vri-es/setup-git-credentials@v2
+      name: Apply Github token
+      with:
+        credentials: https://whoisit:${{ secrets.GH_TOKEN }}@github.com
+    - uses: alztestappvia/alz_cicd_templates/.github/actions/tflint@main
+      id: tflint
+      name: Run TFLint
+      with:
+        working-directory: ${{ inputs.terraform-working-directory }}
+    - name: Publish Unit Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        check_name: TFLint Test Results
+        files: |
+          ${{ steps.tflint.outputs.report-path }}
+  run_checkov:
+    name: Checkov Check
+    runs-on: ${{ inputs.pool }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: alztestappvia/alz_cicd_templates/.github/actions/checkov@main
+      id: checkov
+      name: Run Checkov
+      with:
+        working-directory: ${{ inputs.terraform-working-directory }}
+    - name: Publish Unit Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        check_name: Checkov Test Results
+        files: |
+          ${{ steps.checkov.outputs.report-path }}
